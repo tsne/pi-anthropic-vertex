@@ -59,7 +59,7 @@ export default function (pi: ExtensionAPI) {
 	if (anthropicModels.length === 0) return;
 
 	const models = anthropicModels.map(
-		({ id, name, reasoning, input, cost, contextWindow, maxTokens }) => ({
+		({ id, name, reasoning, input, cost, contextWindow, maxTokens, thinkingLevelMap }) => ({
 			id,
 			name,
 			reasoning,
@@ -67,6 +67,7 @@ export default function (pi: ExtensionAPI) {
 			cost,
 			contextWindow,
 			maxTokens,
+			thinkingLevelMap,
 		}));
 
 	pi.registerProvider("anthropic-vertex", {
@@ -97,7 +98,7 @@ export default function (pi: ExtensionAPI) {
 	});
 }
 
-// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.70.2/packages/ai/src/providers/anthropic.ts#L446
+// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L681
 function supportsAdaptiveThinking(modelId: string): boolean {
 	return (
 		modelId.includes("opus-4-6") ||
@@ -139,14 +140,14 @@ function mapStreamToAnthropicOptions(
 	// client internally, ignoring our injected AnthropicVertex client. Instead we
 	// call stream() directly and replicate the thinking mapping from streamSimpleAnthropic()
 	// here. Keep in sync with:
-	// https://github.com/badlogic/pi-mono/blob/v0.70.2/packages/ai/src/providers/anthropic.ts#L477
+	// https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L717
 	function buildThinkingOptions(): {
 		thinkingEnabled: boolean; effort?: AnthropicOptions["effort"];
 		thinkingBudgetTokens?: number; maxTokens?: number;
 	} {
 		if (!options?.reasoning || !model.reasoning) return { thinkingEnabled: false };
 
-		if (supportsAdaptiveThinking(model.id)) return { thinkingEnabled: true, effort: mapThinkingLevelToEffort(options.reasoning, model.id) };
+		if (supportsAdaptiveThinking(model.id)) return { thinkingEnabled: true, effort: mapThinkingLevelToEffort(model, options.reasoning) };
 
 		const baseMaxTokens = options.maxTokens || Math.min(model.maxTokens, 32000);
 		const adjusted = adjustMaxTokensForThinking(baseMaxTokens, model.maxTokens, options.reasoning, options.thinkingBudgets);
@@ -158,27 +159,25 @@ function mapStreamToAnthropicOptions(
 		};
 	}
 
-	// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.70.2/packages/ai/src/providers/anthropic.ts#L460
-	function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], modelId: string): AnthropicOptions["effort"] {
+	// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L697
+	function mapThinkingLevelToEffort(model: Model<Api>, level: SimpleStreamOptions["reasoning"]): AnthropicOptions["effort"] {
+		const mapped = level ? model.thinkingLevelMap?.[level] : undefined;
+		if (typeof mapped === "string") return mapped as AnthropicOptions["effort"];
+
 		switch (level) {
 			case "minimal":
-				return "low";
 			case "low":
 				return "low";
 			case "medium":
 				return "medium";
 			case "high":
 				return "high";
-			case "xhigh":
-				if (modelId.includes("opus-4-6") || modelId.includes("opus-4.6")) return "max";
-				if (modelId.includes("opus-4-7") || modelId.includes("opus-4.7")) return "xhigh";
-				return "high";
 			default:
 				return "high";
 		}
 	}
 
-	// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.70.2/packages/ai/src/providers/simple-options.ts#L22
+	// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/simple-options.ts#L25
 	function adjustMaxTokensForThinking(
 		baseMaxTokens: number,
 		modelMaxTokens: number,
