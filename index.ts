@@ -43,11 +43,13 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const DEFAULT_REGION = "us-east5";
+const project = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+const region =
+  process.env.GOOGLE_CLOUD_LOCATION ||
+  process.env.CLOUD_ML_REGION ||
+  "us-east5";
 
 export default function (pi: ExtensionAPI) {
-  const project =
-    process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
   if (!project) {
     console.warn(
       "[pi-anthropic-vertex] disabled: GOOGLE_CLOUD_PROJECT is not set",
@@ -59,15 +61,9 @@ export default function (pi: ExtensionAPI) {
   if (!anthropicApi)
     throw new Error("Built-in anthropic-messages provider not found");
 
-  const region =
-    process.env.GOOGLE_CLOUD_LOCATION ||
-    process.env.CLOUD_ML_REGION ||
-    DEFAULT_REGION;
-
   // Pull model definitions from pi's built-in Anthropic provider at runtime.
   const anthropicModels = getModels("anthropic");
   if (anthropicModels.length === 0) return;
-
   const models = anthropicModels.map(
     ({
       id,
@@ -90,42 +86,6 @@ export default function (pi: ExtensionAPI) {
     }),
   );
 
-  // Reuse a client across calls when no per-request headers are set, to avoid
-  // re-reading credentials on every stream call. Two cached profiles are kept
-  // since adaptive and non-adaptive models need different beta headers. Calls
-  // that supply custom headers get a dedicated client.
-  const sharedClientByProfile = new Map<
-    "adaptive" | "legacy",
-    AnthropicVertex
-  >();
-
-  function getVertexClient(
-    modelId: string,
-    requestHeaders?: Record<string, string>,
-  ): AnthropicVertex {
-    if (requestHeaders && Object.keys(requestHeaders).length > 0) {
-      const opts = createVertexClientOpts(
-        project,
-        region,
-        modelId,
-        requestHeaders,
-      );
-      return new AnthropicVertex(opts);
-    }
-
-    const profile: "adaptive" | "legacy" = supportsAdaptiveThinking(modelId)
-      ? "adaptive"
-      : "legacy";
-    let client = sharedClientByProfile.get(profile);
-    if (!client) {
-      const opts = createVertexClientOpts(project, region, modelId);
-      client = new AnthropicVertex(opts);
-      sharedClientByProfile.set(profile, client);
-    }
-
-    return client;
-  }
-
   pi.registerProvider("anthropic-vertex", {
     baseUrl: `https://${region}-aiplatform.googleapis.com`,
     apiKey: "GOOGLE_CLOUD_PROJECT",
@@ -136,7 +96,7 @@ export default function (pi: ExtensionAPI) {
       context,
       options?: SimpleStreamOptions,
     ) => {
-      const client = getVertexClient(model.id, options?.headers);
+      const client = createVertexClient(model.id, options?.headers);
       const anthropicOptions = mapStreamToAnthropicOptions(
         client,
         options,
@@ -150,18 +110,6 @@ export default function (pi: ExtensionAPI) {
       return anthropicApi.stream(patchedModel, context, anthropicOptions);
     },
   });
-}
-
-// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L681
-function supportsAdaptiveThinking(modelId: string): boolean {
-  return (
-    modelId.includes("opus-4-6") ||
-    modelId.includes("opus-4.6") ||
-    modelId.includes("opus-4-7") ||
-    modelId.includes("opus-4.7") ||
-    modelId.includes("sonnet-4-6") ||
-    modelId.includes("sonnet-4.6")
-  );
 }
 
 /**
@@ -193,43 +141,58 @@ function mapStreamToAnthropicOptions(
     onResponse: options?.onResponse,
     maxRetryDelayMs: options?.maxRetryDelayMs,
     metadata: options?.metadata,
-    ...buildThinkingOptions(baseMaxTokens),
+    ...buildThinkingOptions(baseMaxTokens, options, model),
   };
+}
+// We can't call streamSimpleAnthropic() because it creates its own Anthropic
+// client internally, ignoring our injected AnthropicVertex client. Instead we
+// call stream() directly and replicate the thinking mapping from streamSimpleAnthropic()
+// here. Keep in sync with:
+// https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L717
+function buildThinkingOptions(
+  maxTokens: number | undefined,
+  options: SimpleStreamOptions | undefined,
+  model: Model<Api>,
+): {
+  thinkingEnabled: boolean;
+  effort?: AnthropicOptions["effort"];
+  thinkingBudgetTokens?: number;
+  maxTokens?: number;
+} {
+  if (!options?.reasoning || !model.reasoning)
+    return { thinkingEnabled: false };
 
-  // We can't call streamSimpleAnthropic() because it creates its own Anthropic
-  // client internally, ignoring our injected AnthropicVertex client. Instead we
-  // call stream() directly and replicate the thinking mapping from streamSimpleAnthropic()
-  // here. Keep in sync with:
-  // https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L717
-  function buildThinkingOptions(maxTokens: number | undefined): {
-    thinkingEnabled: boolean;
-    effort?: AnthropicOptions["effort"];
-    thinkingBudgetTokens?: number;
-    maxTokens?: number;
-  } {
-    if (!options?.reasoning || !model.reasoning)
-      return { thinkingEnabled: false };
-
-    if (supportsAdaptiveThinking(model.id))
-      return {
-        thinkingEnabled: true,
-        effort: mapThinkingLevelToEffort(model, options.reasoning),
-      };
-
-    const base = maxTokens ?? model.maxTokens;
-    const adjusted = adjustMaxTokensForThinking(
-      base,
-      model.maxTokens,
-      options.reasoning,
-      options.thinkingBudgets,
-    );
-
+  if (supportsAdaptiveThinking(model.id))
     return {
       thinkingEnabled: true,
-      maxTokens: adjusted.maxTokens,
-      thinkingBudgetTokens: adjusted.thinkingBudget,
+      effort: mapThinkingLevelToEffort(model, options.reasoning),
     };
-  }
+
+  const base = maxTokens ?? model.maxTokens;
+  const adjusted = adjustMaxTokensForThinking(
+    base,
+    model.maxTokens,
+    options.reasoning,
+    options.thinkingBudgets,
+  );
+
+  return {
+    thinkingEnabled: true,
+    maxTokens: adjusted.maxTokens,
+    thinkingBudgetTokens: adjusted.thinkingBudget,
+  };
+}
+
+// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L681
+function supportsAdaptiveThinking(modelId: string): boolean {
+  return (
+    modelId.includes("opus-4-6") ||
+    modelId.includes("opus-4.6") ||
+    modelId.includes("opus-4-7") ||
+    modelId.includes("opus-4.7") ||
+    modelId.includes("sonnet-4-6") ||
+    modelId.includes("sonnet-4.6")
+  );
 }
 
 // Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L697
@@ -281,47 +244,87 @@ function adjustMaxTokensForThinking(
   return { maxTokens, thinkingBudget };
 }
 
+/**
+ * Helpers
+ */
+
+// Reuse a client across calls when no per-request headers are set, to avoid
+// re-reading credentials on every stream call. Two cached profiles are kept
+// since adaptive and non-adaptive models need different beta headers. Calls
+// that supply custom headers get a dedicated client.
+type Profile = "adaptive" | "legacy";
+const sharedClient = new Map<Profile, AnthropicVertex>();
+function createVertexClient(
+  modelId: string,
+  requestHeaders?: Record<string, string>,
+): AnthropicVertex {
+  if (requestHeaders && Object.keys(requestHeaders).length > 0) {
+    const opts = createVertexClientOpts(
+      project,
+      region,
+      modelId,
+      requestHeaders,
+    );
+    return new AnthropicVertex(opts);
+  }
+
+  const profile = supportsAdaptiveThinking(modelId) ? "adaptive" : "legacy";
+  let client = sharedClient.get(profile);
+  if (!client) {
+    const opts = createVertexClientOpts(project, region, modelId);
+    client = new AnthropicVertex(opts);
+    sharedClient.set(profile, client);
+  }
+
+  return client;
+}
+
 export function createVertexClientOpts(
   projectId: string | undefined,
   region: string,
   modelId: string,
   requestHeaders?: Record<string, string>,
 ): ClientOptions {
-  const betaHeader = buildAnthropicBetaHeader(
-    modelId,
-    requestHeaders?.["anthropic-beta"],
-  );
-  const defaultHeaders: Record<string, string> = { ...requestHeaders };
-  if (betaHeader) {
-    defaultHeaders["anthropic-beta"] = betaHeader;
-  } else {
-    delete defaultHeaders["anthropic-beta"];
-  }
+  // Adaptive models (4.6+) have interleaved thinking built-in and reject the
+  // header
+  const betaHeaders: string[] = [];
+  if (!supportsAdaptiveThinking(modelId))
+    betaHeaders.push("interleaved-thinking-2025-05-14");
+
+  // Merge any user-supplied beta values
+  if (requestHeaders?.["anthropic-beta"])
+    betaHeaders.push(
+      ...requestHeaders?.["anthropic-beta"]
+        .split(",")
+        .map((item) => item.trim())
+        .filter((value) => value.length > 0),
+    );
+
+  // Return with merged beta header and all other request headers
+  if (betaHeaders.length > 0)
+    return {
+      projectId,
+      region,
+      defaultHeaders: {
+        // preserve non-beta request headers
+        ...requestHeaders,
+        // deduplicates and adds beta request headers
+        "anthropic-beta": [...new Set(betaHeaders)].join(","),
+      },
+    };
+
+  // No beta headers and no request headers: return bare config
+  if (!requestHeaders)
+    return {
+      projectId,
+      region,
+    };
+
+  // Strip the potentially empty anthropic-beta, keep remaining headers
+  const { "anthropic-beta": _, ...defaultHeaders } = requestHeaders;
   return {
     projectId,
     region,
-    defaultHeaders:
-      Object.keys(defaultHeaders).length > 0 ? defaultHeaders : undefined,
+    defaultHeaders,
   };
-}
-
-// Adaptive models (4.6+) have interleaved thinking built-in and reject the
-// header. fine-grained-tool-streaming-2025-05-14 was deprecated in pi v0.68.1
-// (replaced by per-tool eager_input_streaming) and is rejected by Vertex, so
-// it is omitted entirely.
-function buildAnthropicBetaHeader(
-  modelId: string,
-  userBetaHeader?: string,
-): string {
-  const betas = new Set<string>();
-  if (!supportsAdaptiveThinking(modelId)) {
-    betas.add("interleaved-thinking-2025-05-14");
-  }
-  if (userBetaHeader) {
-    for (const item of userBetaHeader.split(",")) {
-      const value = item.trim();
-      if (value.length > 0) betas.add(value);
-    }
-  }
-  return [...betas].join(",");
 }

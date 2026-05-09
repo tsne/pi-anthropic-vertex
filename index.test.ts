@@ -92,6 +92,20 @@ describe("createVertexClientOpts", () => {
     });
   });
 
+  it("passes through user beta for adaptive model without adding interleaved-thinking", () => {
+    const opts = createVertexClientOpts(
+      "proj",
+      "us-east5",
+      "claude-sonnet-4-6",
+      {
+        "anthropic-beta": "custom-beta",
+      },
+    );
+    assert.deepEqual(opts.defaultHeaders, {
+      "anthropic-beta": "custom-beta",
+    });
+  });
+
   it("passes projectId and region through", () => {
     const opts = createVertexClientOpts(
       "my-project",
