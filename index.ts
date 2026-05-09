@@ -30,231 +30,298 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
+import { AnthropicVertex, type ClientOptions } from "@anthropic-ai/vertex-sdk";
 import {
-	getApiProvider,
-	getModels,
-	type AnthropicOptions,
-	type Api,
-	type Model,
-	type SimpleStreamOptions,
-	type ThinkingBudgets,
-	type ThinkingLevel,
-} from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+  getApiProvider,
+  getModels,
+  type AnthropicOptions,
+  type Api,
+  type Model,
+  type SimpleStreamOptions,
+  type ThinkingBudgets,
+  type ThinkingLevel,
+} from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const DEFAULT_REGION = "us-east5";
 
 export default function (pi: ExtensionAPI) {
-	const project = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
-	if (!project) {
-		console.warn("[pi-anthropic-vertex] disabled: GOOGLE_CLOUD_PROJECT is not set");
-		return;
-	}
+  const project =
+    process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+  if (!project) {
+    console.warn(
+      "[pi-anthropic-vertex] disabled: GOOGLE_CLOUD_PROJECT is not set",
+    );
+    return;
+  }
 
-	const anthropicApi = getApiProvider("anthropic-messages");
-	if (!anthropicApi) throw new Error("Built-in anthropic-messages provider not found");
+  const anthropicApi = getApiProvider("anthropic-messages");
+  if (!anthropicApi)
+    throw new Error("Built-in anthropic-messages provider not found");
 
-	const region = process.env.GOOGLE_CLOUD_LOCATION || process.env.CLOUD_ML_REGION || DEFAULT_REGION;
+  const region =
+    process.env.GOOGLE_CLOUD_LOCATION ||
+    process.env.CLOUD_ML_REGION ||
+    DEFAULT_REGION;
 
-	// Pull model definitions from pi's built-in Anthropic provider at runtime.
-	const anthropicModels = getModels("anthropic");
-	if (anthropicModels.length === 0) return;
+  // Pull model definitions from pi's built-in Anthropic provider at runtime.
+  const anthropicModels = getModels("anthropic");
+  if (anthropicModels.length === 0) return;
 
-	const models = anthropicModels.map(
-		({ id, name, reasoning, thinkingLevelMap, input, cost, contextWindow, maxTokens }) => ({
-			id,
-			name,
-			reasoning,
-			thinkingLevelMap,
-			input,
-			cost,
-			contextWindow,
-			maxTokens,
-		}));
+  const models = anthropicModels.map(
+    ({
+      id,
+      name,
+      reasoning,
+      thinkingLevelMap,
+      input,
+      cost,
+      contextWindow,
+      maxTokens,
+    }) => ({
+      id,
+      name,
+      reasoning,
+      thinkingLevelMap,
+      input,
+      cost,
+      contextWindow,
+      maxTokens,
+    }),
+  );
 
-	// Reuse a client across calls when no per-request headers are set, to avoid
-	// re-reading credentials on every stream call. Two cached profiles are kept
-	// since adaptive and non-adaptive models need different beta headers. Calls
-	// that supply custom headers get a dedicated client.
-	const sharedClientByProfile = new Map<"adaptive" | "legacy", AnthropicVertex>();
+  // Reuse a client across calls when no per-request headers are set, to avoid
+  // re-reading credentials on every stream call. Two cached profiles are kept
+  // since adaptive and non-adaptive models need different beta headers. Calls
+  // that supply custom headers get a dedicated client.
+  const sharedClientByProfile = new Map<
+    "adaptive" | "legacy",
+    AnthropicVertex
+  >();
 
-	function getVertexClient(modelId: string, requestHeaders?: Record<string, string>): AnthropicVertex {
-		if (requestHeaders && Object.keys(requestHeaders).length > 0) {
-			return createVertexClient(project, region, modelId, requestHeaders);
-		}
-		const profile: "adaptive" | "legacy" = supportsAdaptiveThinking(modelId) ? "adaptive" : "legacy";
-		let client = sharedClientByProfile.get(profile);
-		if (!client) {
-			client = createVertexClient(project, region, modelId);
-			sharedClientByProfile.set(profile, client);
-		}
-		return client;
-	}
+  function getVertexClient(
+    modelId: string,
+    requestHeaders?: Record<string, string>,
+  ): AnthropicVertex {
+    if (requestHeaders && Object.keys(requestHeaders).length > 0) {
+      const opts = createVertexClientOpts(
+        project,
+        region,
+        modelId,
+        requestHeaders,
+      );
+      return new AnthropicVertex(opts);
+    }
 
-	pi.registerProvider("anthropic-vertex", {
-		baseUrl: `https://${region}-aiplatform.googleapis.com`,
-		apiKey: "GOOGLE_CLOUD_PROJECT",
-		api: "anthropic-vertex",
-		models,
-		streamSimple: (model: Model<Api>, context, options?: SimpleStreamOptions) => {
-			const client = getVertexClient(model.id, options?.headers);
-			const anthropicOptions = mapStreamToAnthropicOptions(client, options, model);
-			// The registry's wrapStream() guard rejects any model whose api field
-			// doesn't match the registered api. Our models are registered as
-			// "anthropic-vertex" but we're calling the "anthropic-messages" provider,
-			// so we patch the api field to pass the guard.
-			const patchedModel = { ...model, api: "anthropic-messages" as Api };
-			return anthropicApi.stream(patchedModel, context, anthropicOptions);
-		},
-	});
+    const profile: "adaptive" | "legacy" = supportsAdaptiveThinking(modelId)
+      ? "adaptive"
+      : "legacy";
+    let client = sharedClientByProfile.get(profile);
+    if (!client) {
+      const opts = createVertexClientOpts(project, region, modelId);
+      client = new AnthropicVertex(opts);
+      sharedClientByProfile.set(profile, client);
+    }
+
+    return client;
+  }
+
+  pi.registerProvider("anthropic-vertex", {
+    baseUrl: `https://${region}-aiplatform.googleapis.com`,
+    apiKey: "GOOGLE_CLOUD_PROJECT",
+    api: "anthropic-vertex",
+    models,
+    streamSimple: (
+      model: Model<Api>,
+      context,
+      options?: SimpleStreamOptions,
+    ) => {
+      const client = getVertexClient(model.id, options?.headers);
+      const anthropicOptions = mapStreamToAnthropicOptions(
+        client,
+        options,
+        model,
+      );
+      // The registry's wrapStream() guard rejects any model whose api field
+      // doesn't match the registered api. Our models are registered as
+      // "anthropic-vertex" but we're calling the "anthropic-messages" provider,
+      // so we patch the api field to pass the guard.
+      const patchedModel = { ...model, api: "anthropic-messages" as Api };
+      return anthropicApi.stream(patchedModel, context, anthropicOptions);
+    },
+  });
 }
 
 // Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L681
 function supportsAdaptiveThinking(modelId: string): boolean {
-	return (
-		modelId.includes("opus-4-6") ||
-		modelId.includes("opus-4.6") ||
-		modelId.includes("opus-4-7") ||
-		modelId.includes("opus-4.7") ||
-		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
-	);
+  return (
+    modelId.includes("opus-4-6") ||
+    modelId.includes("opus-4.6") ||
+    modelId.includes("opus-4-7") ||
+    modelId.includes("opus-4.7") ||
+    modelId.includes("sonnet-4-6") ||
+    modelId.includes("sonnet-4.6")
+  );
 }
 
 /**
  * Build options for the built-in streamAnthropic.
  */
 function mapStreamToAnthropicOptions(
-	client: AnthropicVertex,
-	options: SimpleStreamOptions | undefined,
-	model: Model<Api>,
+  client: AnthropicVertex,
+  options: SimpleStreamOptions | undefined,
+  model: Model<Api>,
 ): AnthropicOptions {
-	const baseMaxTokens =
-		options?.maxTokens ?? (model.maxTokens > 0 ? Math.min(model.maxTokens, 32000) : undefined);
+  const baseMaxTokens =
+    options?.maxTokens ??
+    (model.maxTokens > 0 ? Math.min(model.maxTokens, 32000) : undefined);
 
-	return {
-		// AnthropicVertex extends BaseAnthropic, as Anthropic does, but it has no
-		// completions or models endpoints. A direct cast is not possible. TypeScript
-		// requires "unknown" as intermediate when types don't overlap. Currently safe
-		// because pi's internal streamAnthropic only calls "messages.stream()".
-		client: client as unknown as Anthropic,
-		maxTokens: baseMaxTokens,
-		temperature: options?.temperature,
-		signal: options?.signal,
-		apiKey: options?.apiKey,
-		cacheRetention: options?.cacheRetention,
-		sessionId: options?.sessionId,
-		headers: options?.headers,
-		onPayload: options?.onPayload,
-		onResponse: options?.onResponse,
-		maxRetryDelayMs: options?.maxRetryDelayMs,
-		metadata: options?.metadata,
-		...buildThinkingOptions(baseMaxTokens)
-	};
+  return {
+    // AnthropicVertex extends BaseAnthropic, as Anthropic does, but it has no
+    // completions or models endpoints. A direct cast is not possible. TypeScript
+    // requires "unknown" as intermediate when types don't overlap. Currently safe
+    // because pi's internal streamAnthropic only calls "messages.stream()".
+    client: client as unknown as Anthropic,
+    maxTokens: baseMaxTokens,
+    temperature: options?.temperature,
+    signal: options?.signal,
+    apiKey: options?.apiKey,
+    cacheRetention: options?.cacheRetention,
+    sessionId: options?.sessionId,
+    headers: options?.headers,
+    onPayload: options?.onPayload,
+    onResponse: options?.onResponse,
+    maxRetryDelayMs: options?.maxRetryDelayMs,
+    metadata: options?.metadata,
+    ...buildThinkingOptions(baseMaxTokens),
+  };
 
-	// We can't call streamSimpleAnthropic() because it creates its own Anthropic
-	// client internally, ignoring our injected AnthropicVertex client. Instead we
-	// call stream() directly and replicate the thinking mapping from streamSimpleAnthropic()
-	// here. Keep in sync with:
-	// https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L717
-	function buildThinkingOptions(maxTokens: number | undefined): {
-		thinkingEnabled: boolean; effort?: AnthropicOptions["effort"];
-		thinkingBudgetTokens?: number; maxTokens?: number;
-	} {
-		if (!options?.reasoning || !model.reasoning) return { thinkingEnabled: false };
+  // We can't call streamSimpleAnthropic() because it creates its own Anthropic
+  // client internally, ignoring our injected AnthropicVertex client. Instead we
+  // call stream() directly and replicate the thinking mapping from streamSimpleAnthropic()
+  // here. Keep in sync with:
+  // https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L717
+  function buildThinkingOptions(maxTokens: number | undefined): {
+    thinkingEnabled: boolean;
+    effort?: AnthropicOptions["effort"];
+    thinkingBudgetTokens?: number;
+    maxTokens?: number;
+  } {
+    if (!options?.reasoning || !model.reasoning)
+      return { thinkingEnabled: false };
 
-		if (supportsAdaptiveThinking(model.id)) return { thinkingEnabled: true, effort: mapThinkingLevelToEffort(model, options.reasoning) };
+    if (supportsAdaptiveThinking(model.id))
+      return {
+        thinkingEnabled: true,
+        effort: mapThinkingLevelToEffort(model, options.reasoning),
+      };
 
-		const base = maxTokens ?? model.maxTokens;
-		const adjusted = adjustMaxTokensForThinking(base, model.maxTokens, options.reasoning, options.thinkingBudgets);
+    const base = maxTokens ?? model.maxTokens;
+    const adjusted = adjustMaxTokensForThinking(
+      base,
+      model.maxTokens,
+      options.reasoning,
+      options.thinkingBudgets,
+    );
 
-		return {
-			thinkingEnabled: true,
-			maxTokens: adjusted.maxTokens,
-			thinkingBudgetTokens: adjusted.thinkingBudget,
-		};
-	}
+    return {
+      thinkingEnabled: true,
+      maxTokens: adjusted.maxTokens,
+      thinkingBudgetTokens: adjusted.thinkingBudget,
+    };
+  }
 }
 
 // Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L697
-function mapThinkingLevelToEffort(model: Model<Api>, level: SimpleStreamOptions["reasoning"]): AnthropicOptions["effort"] {
-	const mapped = level ? model.thinkingLevelMap?.[level] : undefined;
-	if (typeof mapped === "string") return mapped as AnthropicOptions["effort"];
+function mapThinkingLevelToEffort(
+  model: Model<Api>,
+  level: SimpleStreamOptions["reasoning"],
+): AnthropicOptions["effort"] {
+  const mapped = level ? model.thinkingLevelMap?.[level] : undefined;
+  if (typeof mapped === "string") return mapped as AnthropicOptions["effort"];
 
-	switch (level) {
-		case "minimal":
-		case "low":
-			return "low";
-		case "medium":
-			return "medium";
-		case "high":
-			return "high";
-		default:
-			return "high";
-	}
+  switch (level) {
+    case "minimal":
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
+    case "high":
+      return "high";
+    default:
+      return "high";
+  }
 }
 
 // Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/simple-options.ts#L25
 function adjustMaxTokensForThinking(
-	baseMaxTokens: number,
-	modelMaxTokens: number,
-	reasoningLevel: ThinkingLevel,
-	customBudgets?: ThinkingBudgets,
+  baseMaxTokens: number,
+  modelMaxTokens: number,
+  reasoningLevel: ThinkingLevel,
+  customBudgets?: ThinkingBudgets,
 ): { maxTokens: number; thinkingBudget: number } {
-	const defaultBudgets: ThinkingBudgets = {
-		minimal: 1024,
-		low: 2048,
-		medium: 8192,
-		high: 16384,
-	};
-	const budgets = { ...defaultBudgets, ...customBudgets };
-	const minOutputTokens = 1024;
-	const level = (reasoningLevel === "xhigh" ? "high" : reasoningLevel) as keyof ThinkingBudgets;
-	let thinkingBudget = budgets[level]!;
-	const maxTokens = Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
+  const defaultBudgets: ThinkingBudgets = {
+    minimal: 1024,
+    low: 2048,
+    medium: 8192,
+    high: 16384,
+  };
+  const budgets = { ...defaultBudgets, ...customBudgets };
+  const minOutputTokens = 1024;
+  const level = (
+    reasoningLevel === "xhigh" ? "high" : reasoningLevel
+  ) as keyof ThinkingBudgets;
+  let thinkingBudget = budgets[level]!;
+  const maxTokens = Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
 
-	if (maxTokens <= thinkingBudget) {
-		thinkingBudget = Math.max(0, maxTokens - minOutputTokens);
-	}
+  if (maxTokens <= thinkingBudget) {
+    thinkingBudget = Math.max(0, maxTokens - minOutputTokens);
+  }
 
-	return { maxTokens, thinkingBudget };
+  return { maxTokens, thinkingBudget };
 }
 
-function createVertexClient(
-	projectId: string,
-	region: string,
-	modelId: string,
-	requestHeaders?: Record<string, string>,
-): AnthropicVertex {
-	const betaHeader = buildAnthropicBetaHeader(modelId, requestHeaders?.["anthropic-beta"]);
-	const defaultHeaders: Record<string, string> = { ...requestHeaders };
-	if (betaHeader) {
-		defaultHeaders["anthropic-beta"] = betaHeader;
-	} else {
-		delete defaultHeaders["anthropic-beta"];
-	}
-	return new AnthropicVertex({
-		projectId,
-		region,
-		defaultHeaders: Object.keys(defaultHeaders).length > 0 ? defaultHeaders : undefined,
-	});
+export function createVertexClientOpts(
+  projectId: string | undefined,
+  region: string,
+  modelId: string,
+  requestHeaders?: Record<string, string>,
+): ClientOptions {
+  const betaHeader = buildAnthropicBetaHeader(
+    modelId,
+    requestHeaders?.["anthropic-beta"],
+  );
+  const defaultHeaders: Record<string, string> = { ...requestHeaders };
+  if (betaHeader) {
+    defaultHeaders["anthropic-beta"] = betaHeader;
+  } else {
+    delete defaultHeaders["anthropic-beta"];
+  }
+  return {
+    projectId,
+    region,
+    defaultHeaders:
+      Object.keys(defaultHeaders).length > 0 ? defaultHeaders : undefined,
+  };
 }
 
 // Adaptive models (4.6+) have interleaved thinking built-in and reject the
 // header. fine-grained-tool-streaming-2025-05-14 was deprecated in pi v0.68.1
 // (replaced by per-tool eager_input_streaming) and is rejected by Vertex, so
 // it is omitted entirely.
-function buildAnthropicBetaHeader(modelId: string, userBetaHeader?: string): string {
-	const betas = new Set<string>();
-	if (!supportsAdaptiveThinking(modelId)) {
-		betas.add("interleaved-thinking-2025-05-14");
-	}
-	if (userBetaHeader) {
-		for (const item of userBetaHeader.split(",")) {
-			const value = item.trim();
-			if (value.length > 0) betas.add(value);
-		}
-	}
-	return [...betas].join(",");
+function buildAnthropicBetaHeader(
+  modelId: string,
+  userBetaHeader?: string,
+): string {
+  const betas = new Set<string>();
+  if (!supportsAdaptiveThinking(modelId)) {
+    betas.add("interleaved-thinking-2025-05-14");
+  }
+  if (userBetaHeader) {
+    for (const item of userBetaHeader.split(",")) {
+      const value = item.trim();
+      if (value.length > 0) betas.add(value);
+    }
+  }
+  return [...betas].join(",");
 }
