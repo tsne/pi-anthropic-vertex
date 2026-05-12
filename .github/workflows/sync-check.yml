@@ -41,7 +41,7 @@ jobs:
         id: check
         run: |
           PINNED=$(cat sync/PI_VERSION)
-          LATEST=$(npm show @mariozechner/pi-coding-agent version)
+          LATEST=$(npm show @earendil-works/pi-coding-agent version)
           echo "pinned=$PINNED" >> "$GITHUB_OUTPUT"
           echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
 

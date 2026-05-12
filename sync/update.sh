@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: ./sync/update.sh [version]
 # If no version is given, fetches the latest from npm.
 
-VERSION="${1:-$(npm show @mariozechner/pi-coding-agent version)}"
+VERSION="${1:-$(npm show @earendil-works/pi-coding-agent version)}"
 SYNC_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_URL="https://raw.githubusercontent.com/badlogic/pi-mono/v${VERSION}/packages/ai/src/providers"
 
