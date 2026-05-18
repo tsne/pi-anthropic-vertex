@@ -121,8 +121,7 @@ function mapStreamToAnthropicOptions(
   model: Model<Api>,
 ): AnthropicOptions {
   const baseMaxTokens =
-    options?.maxTokens ??
-    (model.maxTokens > 0 ? Math.min(model.maxTokens, 32000) : undefined);
+    options?.maxTokens ?? (model.maxTokens > 0 ? model.maxTokens : undefined);
 
   return {
     // AnthropicVertex extends BaseAnthropic, as Anthropic does, but it has no
@@ -148,7 +147,7 @@ function mapStreamToAnthropicOptions(
 // client internally, ignoring our injected AnthropicVertex client. Instead we
 // call stream() directly and replicate the thinking mapping from streamSimpleAnthropic()
 // here. Keep in sync with:
-// https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L717
+// https://github.com/earendil-works/pi/blob/v0.74.1/packages/ai/src/providers/anthropic.ts#L728
 function buildThinkingOptions(
   maxTokens: number | undefined,
   options: SimpleStreamOptions | undefined,
@@ -183,7 +182,7 @@ function buildThinkingOptions(
   };
 }
 
-// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L681
+// Keep in sync with: https://github.com/earendil-works/pi/blob/v0.74.1/packages/ai/src/providers/anthropic.ts#L692
 function supportsAdaptiveThinking(modelId: string): boolean {
   return (
     modelId.includes("opus-4-6") ||
@@ -195,7 +194,7 @@ function supportsAdaptiveThinking(modelId: string): boolean {
   );
 }
 
-// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/anthropic.ts#L697
+// Keep in sync with: https://github.com/earendil-works/pi/blob/v0.74.1/packages/ai/src/providers/anthropic.ts#L708
 function mapThinkingLevelToEffort(
   model: Model<Api>,
   level: SimpleStreamOptions["reasoning"],
@@ -216,7 +215,7 @@ function mapThinkingLevelToEffort(
   }
 }
 
-// Keep in sync with: https://github.com/badlogic/pi-mono/blob/v0.72.0/packages/ai/src/providers/simple-options.ts#L25
+// Keep in sync with: https://github.com/earendil-works/pi/blob/v0.74.1/packages/ai/src/providers/simple-options.ts#L26
 function adjustMaxTokensForThinking(
   baseMaxTokens: number,
   modelMaxTokens: number,

@@ -8,4 +8,4 @@ ISSUE="${1:?Usage: ./sync/release-notes.sh <issue-number>}"
 
 VERSION=$(gh issue view "$ISSUE" --repo twoGiants/pi-anthropic-vertex --json title -q .title | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$')
 
-gh release view "v$VERSION" --repo badlogic/pi-mono
+gh release view "v$VERSION" --repo earendil-works/pi
