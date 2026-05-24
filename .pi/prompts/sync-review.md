@@ -28,7 +28,13 @@ This updates pinned references, commits, pushes, and closes the issue.
 
 Present your analysis and proposed changes, then wait for approval.
 
-After the manual changes to `index.ts` and the "keep in sync" link versions and line numbers are done, run:
+After approval, make the changes to `index.ts`, `index.test.ts`, and the
+"keep in sync" link versions and line numbers. Run the tests to verify.
+
+Then show the full `git diff` and **stop and wait for the user to review**
+before proceeding.
+
+After the user confirms the diff, run:
 
 ```bash
 ./sync/release.sh <version> $ARGUMENTS "<comment>"
