@@ -48,18 +48,38 @@ pi install git:github.com/twoGiants/pi-anthropic-vertex
 
 ## Setup
 
-Authenticate with Google Cloud:
+Authenticate with Google Cloud. Either log in interactively:
 
 ```bash
 gcloud auth application-default login
 ```
 
-Set your project and region:
+or point at a service account key (read directly by the SDK, no `gcloud` needed):
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+```
+
+Set your project and location:
 
 ```bash
 export GOOGLE_CLOUD_PROJECT=your-project-id
-export GOOGLE_CLOUD_LOCATION=us-east5  # optional, defaults to us-east5
+export GOOGLE_CLOUD_LOCATION=global  # see note below
 ```
+
+### Choosing a location
+
+Anthropic model availability on Vertex is scoped per project, per location, and
+per model. A location that serves a model in one project may return `500
+INTERNAL` for the same model in another project. The `global` location is the
+most widely available and is the recommended default. If you have dedicated
+capacity or quota in a specific region (for example `us-east5` or
+`europe-west1`), set that instead.
+
+The extension resolves the location from `GOOGLE_CLOUD_LOCATION`, then
+`CLOUD_ML_REGION`, then falls back to `us-east5`. Note that `CLOUD_ML_REGION`
+may already be set in your environment (Claude Code sets it), so set
+`GOOGLE_CLOUD_LOCATION` explicitly to be sure.
 
 ## Usage
 

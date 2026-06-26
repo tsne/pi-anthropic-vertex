@@ -111,16 +111,16 @@ const fromClaudeCodeName = (name: string, tools?: Tool[]) => {
 function convertContentBlocks(content: (TextContent | ImageContent)[]):
 	| string
 	| Array<
-			| { type: "text"; text: string }
-			| {
-					type: "image";
-					source: {
-						type: "base64";
-						media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-						data: string;
-					};
-			  }
-	  > {
+		| { type: "text"; text: string }
+		| {
+			type: "image";
+			source: {
+				type: "base64";
+				media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+				data: string;
+			};
+		}
+	> {
 	// If only text blocks, return as concatenated string for simplicity
 	const hasImages = content.some((c) => c.type === "image");
 	if (!hasImages) {
@@ -965,8 +965,8 @@ function buildParams(
 					params.output_config =
 						options.effort === "xhigh"
 							? ({ effort: options.effort } as unknown as NonNullable<
-									MessageCreateParamsStreaming["output_config"]
-								>)
+								MessageCreateParamsStreaming["output_config"]
+							>)
 							: { effort: options.effort };
 				}
 			} else {
@@ -1085,14 +1085,14 @@ function convertMessages(
 						blocks.push(
 							allowEmptySignature
 								? {
-										type: "thinking",
-										thinking: sanitizeSurrogates(block.thinking),
-										signature: "",
-									}
+									type: "thinking",
+									thinking: sanitizeSurrogates(block.thinking),
+									signature: "",
+								}
 								: {
-										type: "text",
-										text: sanitizeSurrogates(block.thinking),
-									},
+									type: "text",
+									text: sanitizeSurrogates(block.thinking),
+								},
 						);
 					} else {
 						blocks.push({
