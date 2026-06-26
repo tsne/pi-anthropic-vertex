@@ -22,7 +22,7 @@
     "test": "node --test index.test.ts"
   },
   "dependencies": {
-    "@anthropic-ai/vertex-sdk": "~0.14.4",
+    "@anthropic-ai/vertex-sdk": "~0.16.1",
     "google-auth-library": "^9.4.2"
   },
   "peerDependencies": {
